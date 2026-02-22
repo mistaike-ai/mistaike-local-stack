@@ -7,3 +7,6 @@
 [submodule "repos/ui"]
 	path = repos/ui
 	url = https://github.com/mistaike-ai/mistaike-db-ui.git
+[submodule "repos/mcp"]
+	path = repos/mcp
+	url = https://github.com/mistaike-ai/mistaike-mcp.git

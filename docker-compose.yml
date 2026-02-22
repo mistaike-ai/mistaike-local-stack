@@ -92,6 +92,7 @@ services:
       API_SCOPE: public
       DATABASE_URL: postgresql://postgres:postgres@mistake-postgres-dev:5432/pattern_db?sslmode=disable
       REDIS_URL: redis://mistake-redis-dev:6379/0
+      VAULT_PLATFORM_KEY: ${VAULT_PLATFORM_KEY:-FBlDrawLFRMBwd98e7IPYCT8SlI6VfNvyozEBdbG2iA=}
       PORT: 8080
       PYTHONPATH: /app/src
       LOG_LEVEL: debug
@@ -159,7 +160,7 @@ services:
     container_name: mistake-ui-dev
     command: ["npm", "run", "dev"]
     ports:
-      - "127.0.0.1:3001:3000"
+      - "0.0.0.0:3001:3000"
     volumes:
       - ./repos/ui/ui/src:/app/src
       - ./repos/ui/ui/public:/app/public
@@ -188,6 +189,34 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
+
+  # --- MCP Server (Port 3007) ---
+  mistake-mcp-dev:
+    build:
+      context: ./repos/mcp
+      dockerfile: Dockerfile.mistake-mcp
+    container_name: mistake-mcp-dev
+    ports:
+      - "127.0.0.1:3007:8000"
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@mistake-postgres-dev:5432/pattern_db
+      REDIS_URL: redis://mistake-redis-dev:6379/0
+      VAULT_PLATFORM_KEY: ${VAULT_PLATFORM_KEY:-FBlDrawLFRMBwd98e7IPYCT8SlI6VfNvyozEBdbG2iA=}
+      LOG_LEVEL: debug
+      PYTHONPATH: /app/src
+    depends_on:
+      mistake-postgres-dev:
+        condition: service_healthy
+      mistake-redis-dev:
+        condition: service_healthy
+    networks:
+      - mistaike-unified-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
   # ========================================
   # Backend Pipeline Services (no exposed ports)
@@ -258,10 +287,11 @@ services:
       dockerfile: Dockerfile.mistake-extractor
     container_name: mistake-sanitizer
     environment:
-      <<: *ollama-env
       MODE: sanitizer
       DATABASE_URL: postgresql://postgres:postgres@mistake-postgres-dev:5432/pattern_db
-      SANITIZER_MODEL: ${SANITIZER_MODEL:-qwen3.5:cloud}
+      OLLAMA_ENDPOINT: https://ollama.com
+      OLLAMA_API_KEY: ${OLLAMA_API_KEY}
+      SANITIZER_MODEL: ${SANITIZER_MODEL:-ministral-3:8b}
       CONTINUOUS: "true"
       POLL_INTERVAL_SECONDS: "30"
     depends_on:
