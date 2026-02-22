@@ -4,6 +4,11 @@
 #
 # Prerequisites:
 #   git submodule update --init --recursive
+#   OLLAMA_API_KEY set in environment (cloud Ollama API)
+
+x-ollama-env: &ollama-env
+  OLLAMA_ENDPOINT: https://api.ollama.com
+  OLLAMA_API_KEY: ${OLLAMA_API_KEY}
 
 services:
   # --- Database (Port 3003) ---
@@ -18,9 +23,7 @@ services:
       POSTGRES_DB: pattern_db
     volumes:
       - postgres-data-dev:/var/lib/postgresql/data
-      # Shell script in initdb.d runs all migrations in order
       - ./init/01_run_migrations.sh:/docker-entrypoint-initdb.d/01_run_migrations.sh
-      # Migration dirs mounted for the init script to read
       - ./init/00_create_roles.sql:/migrations/00_init/00_create_roles.sql
       - ./repos/middleware/db/migrations:/migrations/01_middleware
       - ./repos/backend/db/migrations:/migrations/02_backend
@@ -70,28 +73,11 @@ services:
       timeout: 5s
       retries: 5
 
-  # --- Ollama (Port 11434) ---
-  ollama:
-    image: ollama/ollama:latest
-    container_name: ollama
-    ports:
-      - "127.0.0.1:11434:11434"
-    volumes:
-      - ollama-data:/root/.ollama
-    networks:
-      - mistaike-unified-net
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "ollama", "list"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
   # --- Middleware: Public API (Port 3002) ---
   mistake-api-public:
     build:
       context: ./repos/middleware
-      dockerfile: Dockerfile.api
+      dockerfile: ../../Dockerfile.api.local
     container_name: mistake-api-public
     ports:
       - "127.0.0.1:3002:8080"
@@ -103,6 +89,7 @@ services:
       - ./repos/middleware/poetry.lock:/app/poetry.lock
       - ./repos/middleware/db/migrations:/app/db_migrations
     environment:
+      <<: *ollama-env
       API_SCOPE: public
       DATABASE_URL: postgresql://postgres:postgres@mistake-postgres-dev:5432/pattern_db?sslmode=disable
       REDIS_URL: redis://mistake-redis-dev:6379/0
@@ -110,13 +97,10 @@ services:
       PYTHONPATH: /app/src
       LOG_LEVEL: debug
       ENV: DEV
-      OLLAMA_ENDPOINT: http://ollama:11434
     depends_on:
       mistake-postgres-dev:
         condition: service_healthy
       mistake-redis-dev:
-        condition: service_healthy
-      ollama:
         condition: service_healthy
     networks:
       - mistaike-unified-net
@@ -131,11 +115,12 @@ services:
   mistake-api-internal:
     build:
       context: ./repos/middleware
-      dockerfile: Dockerfile.api
+      dockerfile: ../../Dockerfile.api.local
     container_name: mistake-api-internal
     ports:
-      - "127.0.0.1:3005:8080"
-    command: ["/bin/bash", "-c", "python /app/src/api/db/migrate.py && uvicorn api.api.app:app --host 0.0.0.0 --port 8080 --reload"]
+      - "127.0.0.1:3006:8080"
+    # Skip migrate.py — init script already ran all migrations
+    command: ["/bin/bash", "-c", "uvicorn api.api.app:app --host 0.0.0.0 --port 8080 --reload"]
     volumes:
       - ./repos/middleware/src:/app/src
       - ./repos/middleware/tests:/app/tests
@@ -143,6 +128,7 @@ services:
       - ./repos/middleware/poetry.lock:/app/poetry.lock
       - ./repos/middleware/db/migrations:/app/db_migrations
     environment:
+      <<: *ollama-env
       API_SCOPE: internal
       DATABASE_URL: postgresql://postgres:postgres@mistake-postgres-dev:5432/pattern_db?sslmode=disable
       REDIS_URL: redis://mistake-redis-dev:6379/0
@@ -151,14 +137,11 @@ services:
       LOG_LEVEL: debug
       ENV: DEV
       MISTAIKE_AUTO_SEED: "true"
-      OLLAMA_ENDPOINT: http://ollama:11434
       MIGRATIONS_DIR: /app/db_migrations
     depends_on:
       mistake-postgres-dev:
         condition: service_healthy
       mistake-redis-dev:
-        condition: service_healthy
-      ollama:
         condition: service_healthy
     networks:
       - mistaike-unified-net
@@ -209,7 +192,7 @@ services:
 
   # ========================================
   # Backend Pipeline Services (no exposed ports)
-  # All communicate via postgres only
+  # Ollama via cloud API (api.ollama.com)
   # ========================================
 
   # --- Validator (Tier 2) ---
@@ -219,16 +202,13 @@ services:
       dockerfile: Dockerfile.mistake-extractor
     container_name: mistake-validator
     environment:
+      <<: *ollama-env
       MODE: validate
       DATABASE_URL: postgresql://postgres:postgres@mistake-postgres-dev:5432/pattern_db
-      OLLAMA_ENDPOINT: http://ollama:11434
-      OLLAMA_API_KEY: ""
       CONTINUOUS: "true"
       POLL_INTERVAL_SECONDS: "30"
     depends_on:
       mistake-postgres-dev:
-        condition: service_healthy
-      ollama:
         condition: service_healthy
     networks:
       - mistaike-unified-net
@@ -241,16 +221,13 @@ services:
       dockerfile: Dockerfile.mistake-extractor
     container_name: mistake-tier3
     environment:
+      <<: *ollama-env
       MODE: tier3
       DATABASE_URL: postgresql://postgres:postgres@mistake-postgres-dev:5432/pattern_db
-      OLLAMA_ENDPOINT: http://ollama:11434
-      OLLAMA_API_KEY: ""
       CONTINUOUS: "true"
       POLL_INTERVAL_SECONDS: "30"
     depends_on:
       mistake-postgres-dev:
-        condition: service_healthy
-      ollama:
         condition: service_healthy
     networks:
       - mistaike-unified-net
@@ -263,16 +240,13 @@ services:
       dockerfile: Dockerfile.mistake-extractor
     container_name: mistake-tier4
     environment:
+      <<: *ollama-env
       MODE: tier4
       DATABASE_URL: postgresql://postgres:postgres@mistake-postgres-dev:5432/pattern_db
-      OLLAMA_ENDPOINT: http://ollama:11434
-      OLLAMA_API_KEY: ""
       CONTINUOUS: "true"
       POLL_INTERVAL_SECONDS: "30"
     depends_on:
       mistake-postgres-dev:
-        condition: service_healthy
-      ollama:
         condition: service_healthy
     networks:
       - mistaike-unified-net
@@ -285,17 +259,14 @@ services:
       dockerfile: Dockerfile.mistake-extractor
     container_name: mistake-sanitizer
     environment:
+      <<: *ollama-env
       MODE: sanitizer
       DATABASE_URL: postgresql://postgres:postgres@mistake-postgres-dev:5432/pattern_db
-      OLLAMA_ENDPOINT: http://ollama:11434
-      OLLAMA_API_KEY: ""
       SANITIZER_MODEL: ${SANITIZER_MODEL:-qwen3:0.6b}
       CONTINUOUS: "true"
       POLL_INTERVAL_SECONDS: "30"
     depends_on:
       mistake-postgres-dev:
-        condition: service_healthy
-      ollama:
         condition: service_healthy
     networks:
       - mistaike-unified-net
@@ -308,10 +279,9 @@ services:
       dockerfile: Dockerfile.mistake-extractor
     container_name: mistake-extractor
     environment:
+      <<: *ollama-env
       MODE: extract
       DATABASE_URL: postgresql://postgres:postgres@mistake-postgres-dev:5432/pattern_db
-      OLLAMA_ENDPOINT: http://ollama:11434
-      OLLAMA_API_KEY: ""
       GOOGLE_CLOUD_PROJECT: project-6c5512fe-50ae-40fc-918
       GOOGLE_APPLICATION_CREDENTIALS: /gcp/application_default_credentials.json
       CONTINUOUS: "true"
@@ -332,8 +302,6 @@ volumes:
     name: local-stack-pgadmin-data
   redis-data-dev:
     name: local-stack-redis-data
-  ollama-data:
-    name: local-stack-ollama-data
 
 networks:
   mistaike-unified-net:
