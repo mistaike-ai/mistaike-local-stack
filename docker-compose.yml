@@ -7,8 +7,7 @@
 #   OLLAMA_API_KEY set in environment (cloud Ollama API)
 
 x-ollama-env: &ollama-env
-  OLLAMA_ENDPOINT: https://api.ollama.com
-  OLLAMA_API_KEY: ${OLLAMA_API_KEY}
+  OLLAMA_ENDPOINT: http://host.docker.internal:11434
 
 services:
   # --- Database (Port 3003) ---
@@ -262,7 +261,7 @@ services:
       <<: *ollama-env
       MODE: sanitizer
       DATABASE_URL: postgresql://postgres:postgres@mistake-postgres-dev:5432/pattern_db
-      SANITIZER_MODEL: ${SANITIZER_MODEL:-qwen3:0.6b}
+      SANITIZER_MODEL: ${SANITIZER_MODEL:-qwen3.5:cloud}
       CONTINUOUS: "true"
       POLL_INTERVAL_SECONDS: "30"
     depends_on:
