@@ -1,0 +1,341 @@
+# mistaike-local-stack — Full local development environment
+# All services on the 3000s port range
+# Usage: docker compose up -d
+#
+# Prerequisites:
+#   git submodule update --init --recursive
+
+services:
+  # --- Database (Port 3003) ---
+  mistake-postgres-dev:
+    image: pgvector/pgvector:pg16
+    container_name: mistake-postgres-dev
+    ports:
+      - "127.0.0.1:3003:5432"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: pattern_db
+    volumes:
+      - postgres-data-dev:/var/lib/postgresql/data
+      # Shell script in initdb.d runs all migrations in order
+      - ./init/01_run_migrations.sh:/docker-entrypoint-initdb.d/01_run_migrations.sh
+      # Migration dirs mounted for the init script to read
+      - ./init/00_create_roles.sql:/migrations/00_init/00_create_roles.sql
+      - ./repos/middleware/db/migrations:/migrations/01_middleware
+      - ./repos/backend/db/migrations:/migrations/02_backend
+      - ./seed:/migrations/50_seed
+    networks:
+      - mistaike-unified-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # --- PGAdmin (Port 3004) ---
+  mistake-pgadmin-dev:
+    image: dpage/pgadmin4:latest
+    container_name: mistake-pgadmin-dev
+    ports:
+      - "127.0.0.1:3004:80"
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-admin@mistaike.dev}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-admin}
+      PGADMIN_DISABLE_POSTFIX: "true"
+    volumes:
+      - pgadmin-data-dev:/var/lib/pgadmin
+    depends_on:
+      mistake-postgres-dev:
+        condition: service_healthy
+    networks:
+      - mistaike-unified-net
+    restart: unless-stopped
+
+  # --- Redis (Port 6379) ---
+  mistake-redis-dev:
+    image: redis:7-alpine
+    container_name: mistake-redis-dev
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - redis-data-dev:/data
+    networks:
+      - mistaike-unified-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # --- Ollama (Port 11434) ---
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    ports:
+      - "127.0.0.1:11434:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+    networks:
+      - mistaike-unified-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # --- Middleware: Public API (Port 3002) ---
+  mistake-api-public:
+    build:
+      context: ./repos/middleware
+      dockerfile: Dockerfile.api
+    container_name: mistake-api-public
+    ports:
+      - "127.0.0.1:3002:8080"
+    command: ["/bin/bash", "-c", "uvicorn api.api.app:app --host 0.0.0.0 --port 8080 --reload"]
+    volumes:
+      - ./repos/middleware/src:/app/src
+      - ./repos/middleware/tests:/app/tests
+      - ./repos/middleware/pyproject.toml:/app/pyproject.toml
+      - ./repos/middleware/poetry.lock:/app/poetry.lock
+      - ./repos/middleware/db/migrations:/app/db_migrations
+    environment:
+      API_SCOPE: public
+      DATABASE_URL: postgresql://postgres:postgres@mistake-postgres-dev:5432/pattern_db?sslmode=disable
+      REDIS_URL: redis://mistake-redis-dev:6379/0
+      PORT: 8080
+      PYTHONPATH: /app/src
+      LOG_LEVEL: debug
+      ENV: DEV
+      OLLAMA_ENDPOINT: http://ollama:11434
+    depends_on:
+      mistake-postgres-dev:
+        condition: service_healthy
+      mistake-redis-dev:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+    networks:
+      - mistaike-unified-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # --- Middleware: Internal API (Port 3005) ---
+  mistake-api-internal:
+    build:
+      context: ./repos/middleware
+      dockerfile: Dockerfile.api
+    container_name: mistake-api-internal
+    ports:
+      - "127.0.0.1:3005:8080"
+    command: ["/bin/bash", "-c", "python /app/src/api/db/migrate.py && uvicorn api.api.app:app --host 0.0.0.0 --port 8080 --reload"]
+    volumes:
+      - ./repos/middleware/src:/app/src
+      - ./repos/middleware/tests:/app/tests
+      - ./repos/middleware/pyproject.toml:/app/pyproject.toml
+      - ./repos/middleware/poetry.lock:/app/poetry.lock
+      - ./repos/middleware/db/migrations:/app/db_migrations
+    environment:
+      API_SCOPE: internal
+      DATABASE_URL: postgresql://postgres:postgres@mistake-postgres-dev:5432/pattern_db?sslmode=disable
+      REDIS_URL: redis://mistake-redis-dev:6379/0
+      PORT: 8080
+      PYTHONPATH: /app/src
+      LOG_LEVEL: debug
+      ENV: DEV
+      MISTAIKE_AUTO_SEED: "true"
+      OLLAMA_ENDPOINT: http://ollama:11434
+      MIGRATIONS_DIR: /app/db_migrations
+    depends_on:
+      mistake-postgres-dev:
+        condition: service_healthy
+      mistake-redis-dev:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+    networks:
+      - mistaike-unified-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # --- UI (Port 3001) ---
+  mistake-ui-dev:
+    build:
+      context: ./repos/ui/ui
+      dockerfile: Dockerfile.dev
+    container_name: mistake-ui-dev
+    command: ["npm", "run", "dev"]
+    ports:
+      - "127.0.0.1:3001:3000"
+    volumes:
+      - ./repos/ui/ui/src:/app/src
+      - ./repos/ui/ui/public:/app/public
+      - ./repos/ui/ui/package.json:/app/package.json
+      - ./repos/ui/ui/package-lock.json:/app/package-lock.json
+      - ./repos/ui/ui/tsconfig.json:/app/tsconfig.json
+      - ./repos/ui/ui/next.config.ts:/app/next.config.ts
+      - ./repos/ui/ui/tailwind.config.ts:/app/tailwind.config.ts
+      - ./repos/ui/ui/postcss.config.mjs:/app/postcss.config.mjs
+    environment:
+      NODE_ENV: development
+      NEXT_TELEMETRY_DISABLED: 1
+      API_INTERNAL_URL: http://mistake-api-internal:8080
+      API_PUBLIC_URL: http://mistake-api-public:8080
+    depends_on:
+      mistake-api-internal:
+        condition: service_healthy
+      mistake-api-public:
+        condition: service_healthy
+    networks:
+      - mistaike-unified-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # ========================================
+  # Backend Pipeline Services (no exposed ports)
+  # All communicate via postgres only
+  # ========================================
+
+  # --- Validator (Tier 2) ---
+  mistake-validator:
+    build:
+      context: ./repos/backend/src
+      dockerfile: Dockerfile.mistake-extractor
+    container_name: mistake-validator
+    environment:
+      MODE: validate
+      DATABASE_URL: postgresql://postgres:postgres@mistake-postgres-dev:5432/pattern_db
+      OLLAMA_ENDPOINT: http://ollama:11434
+      OLLAMA_API_KEY: ""
+      CONTINUOUS: "true"
+      POLL_INTERVAL_SECONDS: "30"
+    depends_on:
+      mistake-postgres-dev:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+    networks:
+      - mistaike-unified-net
+    restart: unless-stopped
+
+  # --- Tier 3 (Full-Context Validation) ---
+  mistake-tier3:
+    build:
+      context: ./repos/backend/src
+      dockerfile: Dockerfile.mistake-extractor
+    container_name: mistake-tier3
+    environment:
+      MODE: tier3
+      DATABASE_URL: postgresql://postgres:postgres@mistake-postgres-dev:5432/pattern_db
+      OLLAMA_ENDPOINT: http://ollama:11434
+      OLLAMA_API_KEY: ""
+      CONTINUOUS: "true"
+      POLL_INTERVAL_SECONDS: "30"
+    depends_on:
+      mistake-postgres-dev:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+    networks:
+      - mistaike-unified-net
+    restart: unless-stopped
+
+  # --- Tier 4 (Reject Recovery) ---
+  mistake-tier4:
+    build:
+      context: ./repos/backend/src
+      dockerfile: Dockerfile.mistake-extractor
+    container_name: mistake-tier4
+    environment:
+      MODE: tier4
+      DATABASE_URL: postgresql://postgres:postgres@mistake-postgres-dev:5432/pattern_db
+      OLLAMA_ENDPOINT: http://ollama:11434
+      OLLAMA_API_KEY: ""
+      CONTINUOUS: "true"
+      POLL_INTERVAL_SECONDS: "30"
+    depends_on:
+      mistake-postgres-dev:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+    networks:
+      - mistaike-unified-net
+    restart: unless-stopped
+
+  # --- Sanitizer ---
+  mistake-sanitizer:
+    build:
+      context: ./repos/backend/src
+      dockerfile: Dockerfile.mistake-extractor
+    container_name: mistake-sanitizer
+    environment:
+      MODE: sanitizer
+      DATABASE_URL: postgresql://postgres:postgres@mistake-postgres-dev:5432/pattern_db
+      OLLAMA_ENDPOINT: http://ollama:11434
+      OLLAMA_API_KEY: ""
+      SANITIZER_MODEL: ${SANITIZER_MODEL:-qwen3:0.6b}
+      CONTINUOUS: "true"
+      POLL_INTERVAL_SECONDS: "30"
+    depends_on:
+      mistake-postgres-dev:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+    networks:
+      - mistaike-unified-net
+    restart: unless-stopped
+
+  # --- Extractor (Embeddings) ---
+  mistake-extractor:
+    build:
+      context: ./repos/backend/src
+      dockerfile: Dockerfile.mistake-extractor
+    container_name: mistake-extractor
+    environment:
+      MODE: extract
+      DATABASE_URL: postgresql://postgres:postgres@mistake-postgres-dev:5432/pattern_db
+      OLLAMA_ENDPOINT: http://ollama:11434
+      OLLAMA_API_KEY: ""
+      GOOGLE_CLOUD_PROJECT: project-6c5512fe-50ae-40fc-918
+      GOOGLE_APPLICATION_CREDENTIALS: /gcp/application_default_credentials.json
+      CONTINUOUS: "true"
+      POLL_INTERVAL_SECONDS: "30"
+    volumes:
+      - ${HOME}/.config/gcloud/application_default_credentials.json:/gcp/application_default_credentials.json:ro
+    depends_on:
+      mistake-postgres-dev:
+        condition: service_healthy
+    networks:
+      - mistaike-unified-net
+    restart: unless-stopped
+
+volumes:
+  postgres-data-dev:
+    name: local-stack-postgres-data
+  pgadmin-data-dev:
+    name: local-stack-pgadmin-data
+  redis-data-dev:
+    name: local-stack-redis-data
+  ollama-data:
+    name: local-stack-ollama-data
+
+networks:
+  mistaike-unified-net:
+    name: mistaike-unified-net
+    driver: bridge

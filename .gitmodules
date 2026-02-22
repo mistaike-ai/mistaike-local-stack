@@ -1,0 +1,9 @@
+[submodule "repos/middleware"]
+	path = repos/middleware
+	url = https://github.com/mistaike-ai/mistaike-db-middleware.git
+[submodule "repos/backend"]
+	path = repos/backend
+	url = https://github.com/mistaike-ai/mistaike-db-backend.git
+[submodule "repos/ui"]
+	path = repos/ui
+	url = https://github.com/mistaike-ai/mistaike-db-ui.git
