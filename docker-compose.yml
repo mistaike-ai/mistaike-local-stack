@@ -25,13 +25,26 @@ services:
       - ./init/01_run_migrations.sh:/docker-entrypoint-initdb.d/01_run_migrations.sh
       - ./init/00_create_roles.sql:/migrations/00_init/00_create_roles.sql
       - ./repos/middleware/db/migrations:/migrations/01_middleware
-      - ./repos/backend/db/migrations:/migrations/02_backend
+      - ../mistaike-db-backend/db/migrations:/migrations/02_backend
       - ./seed:/migrations/50_seed
     networks:
       - mistaike-unified-net
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # --- Redis (Port 6379) ---
+  mistake-redis-dev:
+    image: redis:7-alpine
+    container_name: mistake-redis-dev
+    networks:
+      - mistaike-unified-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -55,28 +68,11 @@ services:
       - mistaike-unified-net
     restart: unless-stopped
 
-  # --- Redis (Port 6379) ---
-  mistake-redis-dev:
-    image: redis:7-alpine
-    container_name: mistake-redis-dev
-    ports:
-      - "127.0.0.1:6379:6379"
-    volumes:
-      - redis-data-dev:/data
-    networks:
-      - mistaike-unified-net
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
   # --- Middleware: Public API (Port 3002) ---
   mistake-api-public:
     build:
-      context: ./repos/middleware
-      dockerfile: ../../Dockerfile.api.local
+      context: ../mistaike-db-middleware
+      dockerfile: Dockerfile.api
     container_name: mistake-api-public
     ports:
       - "127.0.0.1:3002:8080"
@@ -114,12 +110,11 @@ services:
   # --- Middleware: Internal API (Port 3005) ---
   mistake-api-internal:
     build:
-      context: ./repos/middleware
-      dockerfile: ../../Dockerfile.api.local
+      context: ../mistaike-db-middleware
+      dockerfile: Dockerfile.api
     container_name: mistake-api-internal
     ports:
       - "127.0.0.1:3006:8080"
-    # Skip migrate.py — init script already ran all migrations
     command: ["/bin/bash", "-c", "uvicorn api.api.app:app --host 0.0.0.0 --port 8080 --reload"]
     volumes:
       - ./repos/middleware/src:/app/src
@@ -155,26 +150,27 @@ services:
   # --- UI (Port 3001) ---
   mistake-ui-dev:
     build:
-      context: ./repos/ui/ui
+      context: ../mistaike-db-ui
       dockerfile: Dockerfile.dev
     container_name: mistake-ui-dev
     command: ["npm", "run", "dev"]
     ports:
       - "0.0.0.0:3001:3000"
     volumes:
-      - ./repos/ui/ui/src:/app/src
-      - ./repos/ui/ui/public:/app/public
-      - ./repos/ui/ui/package.json:/app/package.json
-      - ./repos/ui/ui/package-lock.json:/app/package-lock.json
-      - ./repos/ui/ui/tsconfig.json:/app/tsconfig.json
-      - ./repos/ui/ui/next.config.ts:/app/next.config.ts
-      - ./repos/ui/ui/tailwind.config.ts:/app/tailwind.config.ts
-      - ./repos/ui/ui/postcss.config.mjs:/app/postcss.config.mjs
+      - ./repos/ui/src:/app/src
+      - ./repos/ui/public:/app/public
+      - ./repos/ui/package.json:/app/package.json
+      - ./repos/ui/package-lock.json:/app/package-lock.json
+      - ./repos/ui/tsconfig.json:/app/tsconfig.json
+      - ./repos/ui/next.config.ts:/app/next.config.ts
+      - ./repos/ui/tailwind.config.ts:/app/tailwind.config.ts
+      - ./repos/ui/postcss.config.mjs:/app/postcss.config.mjs
     environment:
       NODE_ENV: development
       NEXT_TELEMETRY_DISABLED: 1
       API_INTERNAL_URL: http://mistake-api-internal:8080
       API_PUBLIC_URL: http://mistake-api-public:8080
+      NEXT_PUBLIC_API_URL: http://localhost:3002
     depends_on:
       mistake-api-internal:
         condition: service_healthy
@@ -193,21 +189,18 @@ services:
   # --- MCP Server (Port 3007) ---
   mistake-mcp-dev:
     build:
-      context: ./repos/mcp
+      context: ../mistaike-mcp
       dockerfile: Dockerfile.mistake-mcp
     container_name: mistake-mcp-dev
     ports:
       - "127.0.0.1:3007:8000"
     environment:
       DATABASE_URL: postgresql://postgres:postgres@mistake-postgres-dev:5432/pattern_db
-      REDIS_URL: redis://mistake-redis-dev:6379/0
       VAULT_PLATFORM_KEY: ${VAULT_PLATFORM_KEY:-FBlDrawLFRMBwd98e7IPYCT8SlI6VfNvyozEBdbG2iA=}
       LOG_LEVEL: debug
       PYTHONPATH: /app/src
     depends_on:
       mistake-postgres-dev:
-        condition: service_healthy
-      mistake-redis-dev:
         condition: service_healthy
     networks:
       - mistaike-unified-net
@@ -218,119 +211,11 @@ services:
       timeout: 10s
       retries: 3
 
-  # ========================================
-  # Backend Pipeline Services (no exposed ports)
-  # Ollama via cloud API (api.ollama.com)
-  # ========================================
-
-  # --- Validator (Tier 2) ---
-  mistake-validator:
-    build:
-      context: ./repos/backend/src
-      dockerfile: Dockerfile.mistake-extractor
-    container_name: mistake-validator
-    environment:
-      <<: *ollama-env
-      MODE: validate
-      DATABASE_URL: postgresql://postgres:postgres@mistake-postgres-dev:5432/pattern_db
-      CONTINUOUS: "true"
-      POLL_INTERVAL_SECONDS: "30"
-    depends_on:
-      mistake-postgres-dev:
-        condition: service_healthy
-    networks:
-      - mistaike-unified-net
-    restart: unless-stopped
-
-  # --- Tier 3 (Full-Context Validation) ---
-  mistake-tier3:
-    build:
-      context: ./repos/backend/src
-      dockerfile: Dockerfile.mistake-extractor
-    container_name: mistake-tier3
-    environment:
-      <<: *ollama-env
-      MODE: tier3
-      DATABASE_URL: postgresql://postgres:postgres@mistake-postgres-dev:5432/pattern_db
-      CONTINUOUS: "true"
-      POLL_INTERVAL_SECONDS: "30"
-    depends_on:
-      mistake-postgres-dev:
-        condition: service_healthy
-    networks:
-      - mistaike-unified-net
-    restart: unless-stopped
-
-  # --- Tier 4 (Reject Recovery) ---
-  mistake-tier4:
-    build:
-      context: ./repos/backend/src
-      dockerfile: Dockerfile.mistake-extractor
-    container_name: mistake-tier4
-    environment:
-      <<: *ollama-env
-      MODE: tier4
-      DATABASE_URL: postgresql://postgres:postgres@mistake-postgres-dev:5432/pattern_db
-      CONTINUOUS: "true"
-      POLL_INTERVAL_SECONDS: "30"
-    depends_on:
-      mistake-postgres-dev:
-        condition: service_healthy
-    networks:
-      - mistaike-unified-net
-    restart: unless-stopped
-
-  # --- Sanitizer ---
-  mistake-sanitizer:
-    build:
-      context: ./repos/backend/src
-      dockerfile: Dockerfile.mistake-extractor
-    container_name: mistake-sanitizer
-    environment:
-      MODE: sanitizer
-      DATABASE_URL: postgresql://postgres:postgres@mistake-postgres-dev:5432/pattern_db
-      OLLAMA_ENDPOINT: https://ollama.com
-      OLLAMA_API_KEY: ${OLLAMA_API_KEY}
-      SANITIZER_MODEL: ${SANITIZER_MODEL:-ministral-3:8b}
-      CONTINUOUS: "true"
-      POLL_INTERVAL_SECONDS: "30"
-    depends_on:
-      mistake-postgres-dev:
-        condition: service_healthy
-    networks:
-      - mistaike-unified-net
-    restart: unless-stopped
-
-  # --- Extractor (Embeddings) ---
-  mistake-extractor:
-    build:
-      context: ./repos/backend/src
-      dockerfile: Dockerfile.mistake-extractor
-    container_name: mistake-extractor
-    environment:
-      <<: *ollama-env
-      MODE: extract
-      DATABASE_URL: postgresql://postgres:postgres@mistake-postgres-dev:5432/pattern_db
-      GOOGLE_CLOUD_PROJECT: project-6c5512fe-50ae-40fc-918
-      GOOGLE_APPLICATION_CREDENTIALS: /gcp/application_default_credentials.json
-      CONTINUOUS: "true"
-      POLL_INTERVAL_SECONDS: "30"
-    volumes:
-      - ${HOME}/.config/gcloud/application_default_credentials.json:/gcp/application_default_credentials.json:ro
-    depends_on:
-      mistake-postgres-dev:
-        condition: service_healthy
-    networks:
-      - mistaike-unified-net
-    restart: unless-stopped
-
 volumes:
   postgres-data-dev:
     name: local-stack-postgres-data
   pgadmin-data-dev:
     name: local-stack-pgadmin-data
-  redis-data-dev:
-    name: local-stack-redis-data
 
 networks:
   mistaike-unified-net:
