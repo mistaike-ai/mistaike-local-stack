@@ -196,11 +196,14 @@ services:
       - "127.0.0.1:3007:8000"
     environment:
       DATABASE_URL: postgresql://postgres:postgres@mistake-postgres-dev:5432/pattern_db
+      REDIS_URL: redis://mistake-redis-dev:6379/1
       VAULT_PLATFORM_KEY: ${VAULT_PLATFORM_KEY:-FBlDrawLFRMBwd98e7IPYCT8SlI6VfNvyozEBdbG2iA=}
       LOG_LEVEL: debug
       PYTHONPATH: /app/src
     depends_on:
       mistake-postgres-dev:
+        condition: service_healthy
+      mistake-redis-dev:
         condition: service_healthy
     networks:
       - mistaike-unified-net

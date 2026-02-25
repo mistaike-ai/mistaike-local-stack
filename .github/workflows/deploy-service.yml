@@ -1,0 +1,86 @@
+# Reusable workflow — deploy a service via Portainer stack webhook
+#
+# How it works:
+#   1. CI builds + pushes image to GHCR with sha tag
+#   2. This workflow hits the Portainer webhook for the target stack
+#   3. Portainer pulls the latest image and restarts the service
+#
+# Setup (one-time in Portainer UI):
+#   - Create two stacks: "mistaike-uat" and "mistaike-prod"
+#   - Each stack points at docker-compose.prod.yml with its own .env.prod
+#   - Enable webhook on each stack — copy URL to GitHub org secrets:
+#       PORTAINER_WEBHOOK_UAT
+#       PORTAINER_WEBHOOK_PROD
+#
+# Called from each service repo's CI:
+#   uses: mistaike-ai/mistaike-local-stack/.github/workflows/deploy-service.yml@main
+#   with:
+#     environment: uat       # or: production
+#     image: ghcr.io/mistaike-ai/mistake-api
+#     tag: ${{ github.sha }}
+#     image_tag_var: API_IMAGE_TAG
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        required: true
+        type: string
+        description: "uat or production"
+      image:
+        required: true
+        type: string
+        description: "Full GHCR image path e.g. ghcr.io/mistaike-ai/mistake-api"
+      tag:
+        required: true
+        type: string
+        description: "Image tag to deploy (git sha or semver)"
+      image_tag_var:
+        required: true
+        type: string
+        description: "Env var name in .env.prod to update e.g. API_IMAGE_TAG"
+    secrets:
+      PORTAINER_WEBHOOK_UAT:
+        required: true
+      PORTAINER_WEBHOOK_PROD:
+        required: true
+      HETZNER_SSH_KEY:
+        required: true
+      HETZNER_HOST:
+        required: true
+      HETZNER_USER:
+        required: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    steps:
+      - name: Update image tag on server
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.HETZNER_HOST }}
+          username: ${{ secrets.HETZNER_USER }}
+          key: ${{ secrets.HETZNER_SSH_KEY }}
+          script: |
+            ENV_FILE="/opt/mistaike/.env.${{ inputs.environment == 'production' && 'prod' || 'uat' }}"
+            sed -i "s|^${{ inputs.image_tag_var }}=.*|${{ inputs.image_tag_var }}=${{ inputs.tag }}|" "$ENV_FILE"
+            echo "Updated ${{ inputs.image_tag_var }}=${{ inputs.tag }} in $ENV_FILE"
+
+      - name: Trigger Portainer webhook
+        run: |
+          if [ "${{ inputs.environment }}" = "production" ]; then
+            WEBHOOK="${{ secrets.PORTAINER_WEBHOOK_PROD }}"
+          else
+            WEBHOOK="${{ secrets.PORTAINER_WEBHOOK_UAT }}"
+          fi
+          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$WEBHOOK")
+          if [ "$HTTP_STATUS" != "204" ]; then
+            echo "Portainer webhook returned $HTTP_STATUS"
+            exit 1
+          fi
+          echo "✓ Portainer webhook triggered for ${{ inputs.environment }}"
+
+      - name: Summary
+        run: |
+          echo "### Deployed ${{ inputs.image }}:${{ inputs.tag }} to ${{ inputs.environment }}" >> $GITHUB_STEP_SUMMARY

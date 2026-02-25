@@ -173,7 +173,23 @@ services:
       - mistaike-net
     <<: [*restart, *logging]
 
-  # --- Cloudflare tunnel (DB access) ---
+  # --- Portainer Business (Docker management UI + stack webhooks for CI deploys) ---
+  portainer:
+    image: portainer/portainer-ee:latest
+    container_name: mistake-portainer
+    ports:
+      - "127.0.0.1:9000:9000"
+    command: --license-key ${PORTAINER_LICENSE_KEY}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /data/portainer:/data
+    environment:
+      PORTAINER_LICENSE_KEY: ${PORTAINER_LICENSE_KEY}
+    networks:
+      - mistaike-net
+    <<: [*restart, *logging]
+
+  # --- Cloudflare tunnel (DB access + internal service exposure) ---
   cloudflared:
     image: cloudflare/cloudflared:latest
     container_name: mistake-cloudflared

@@ -1,0 +1,38 @@
+version: '3.8'
+
+services:
+  e2e-sanitizer:
+    build:
+      context: ../mistaike-db-backend/src
+      dockerfile: Dockerfile.mistake-extractor
+    container_name: e2e-sanitizer
+    environment:
+      MODE: sanitizer
+      DATABASE_URL: postgresql://postgres:postgres@mistake-postgres-dev:5432/pattern_db
+      OLLAMA_ENDPOINT: http://host.docker.internal:11434
+      SANITIZER_MODEL: qwen3.5:cloud
+      CONTINUOUS: "false"
+    volumes:
+      - ../mistaike-db-backend/src/src:/app/src
+    networks:
+      - mistaike-unified-net
+
+  e2e-extractor:
+    build:
+      context: ../mistaike-db-backend/src
+      dockerfile: Dockerfile.mistake-extractor
+    container_name: e2e-extractor
+    environment:
+      MODE: extract
+      DATABASE_URL: postgresql://postgres:postgres@mistake-postgres-dev:5432/pattern_db
+      OLLAMA_ENDPOINT: http://host.docker.internal:11434
+      CONTINUOUS: "false"
+    volumes:
+      - ../mistaike-db-backend/src/src:/app/src
+    networks:
+      - mistaike-unified-net
+
+networks:
+  mistaike-unified-net:
+    external: true
+    name: mistaike-unified-net

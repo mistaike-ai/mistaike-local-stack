@@ -36,3 +36,9 @@ mcp.mistaike.ai {
     import tls_cloudflare
     reverse_proxy mcp:8080
 }
+
+# Portainer — restricted to your IP via Cloudflare Access (set up in CF dashboard)
+portainer.mistaike.ai {
+    import tls_cloudflare
+    reverse_proxy portainer:9000
+}

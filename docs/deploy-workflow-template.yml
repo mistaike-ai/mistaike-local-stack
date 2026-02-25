@@ -1,0 +1,76 @@
+# Template — copy this into .github/workflows/deploy.yml in each service repo
+# Replace SERVICE_NAME, IMAGE_NAME, IMAGE_TAG_VAR with repo-specific values
+#
+# Service mapping:
+#   mistaike-db-middleware  → service: api-public + api-internal, image: mistake-api,   var: API_IMAGE_TAG
+#   mistaike-db-ui          → service: ui,                         image: mistake-ui,    var: UI_IMAGE_TAG
+#   mistaike-mcp            → service: mcp,                        image: mistake-mcp,   var: MCP_IMAGE_TAG
+#   mistaike-db-backend     → service: validator+sanitizer+extractor, image: mistake-backend, var: BACKEND_IMAGE_TAG
+
+name: Deploy
+
+on:
+  push:
+    branches: [main]        # → UAT
+  release:
+    types: [published]      # → PROD (triggered when you cut a version tag)
+
+env:
+  IMAGE: ghcr.io/mistaike-ai/IMAGE_NAME   # ← replace
+  IMAGE_TAG_VAR: API_IMAGE_TAG             # ← replace
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.meta.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=sha,prefix=,format=short
+            type=semver,pattern={{version}}
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy-uat:
+    needs: build
+    if: github.ref == 'refs/heads/main'
+    uses: mistaike-ai/mistaike-local-stack/.github/workflows/deploy-service.yml@main
+    with:
+      environment: uat
+      image: ${{ needs.build.outputs.tag && 'ghcr.io/mistaike-ai/IMAGE_NAME' }}
+      tag: ${{ needs.build.outputs.tag }}
+      image_tag_var: API_IMAGE_TAG   # ← replace
+    secrets: inherit
+
+  deploy-prod:
+    needs: build
+    if: github.event_name == 'release'
+    uses: mistaike-ai/mistaike-local-stack/.github/workflows/deploy-service.yml@main
+    with:
+      environment: production
+      image: ${{ needs.build.outputs.tag && 'ghcr.io/mistaike-ai/IMAGE_NAME' }}
+      tag: ${{ needs.build.outputs.tag }}
+      image_tag_var: API_IMAGE_TAG   # ← replace
+    secrets: inherit
