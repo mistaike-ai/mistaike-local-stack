@@ -179,12 +179,20 @@ services:
     container_name: mistake-portainer
     ports:
       - "127.0.0.1:9000:9000"
-    command: --license-key ${PORTAINER_LICENSE_KEY}
+    command: >
+      --license-key ${PORTAINER_LICENSE_KEY}
+      --oauth-provider github
+      --oauth-client-id ${GITHUB_OAUTH_CLIENT_ID}
+      --oauth-client-secret ${GITHUB_OAUTH_CLIENT_SECRET}
+      --oauth-enable-device-flow
+      --oauth-user-identifier login
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - /data/portainer:/data
     environment:
       PORTAINER_LICENSE_KEY: ${PORTAINER_LICENSE_KEY}
+      GITHUB_OAUTH_CLIENT_ID: ${GITHUB_OAUTH_CLIENT_ID}
+      GITHUB_OAUTH_CLIENT_SECRET: ${GITHUB_OAUTH_CLIENT_SECRET}
     networks:
       - mistaike-net
     <<: [*restart, *logging]
