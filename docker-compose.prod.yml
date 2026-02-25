@@ -1,0 +1,189 @@
+# mistaike — Hetzner production stack
+# Xeon E-2276G / 64GB / 2×960GB SSD
+# All persistent data on /data (960GB SSD)
+#
+# Usage:
+#   cp .env.prod.example .env.prod
+#   docker compose -f docker-compose.prod.yml up -d
+#
+# Secrets: set in .env.prod (gitignored)
+# Google embeddings: GOOGLE_API_KEY in .env.prod (gemini-embedding-001 retained)
+
+x-restart: &restart
+  restart: unless-stopped
+
+x-logging: &logging
+  logging:
+    driver: json-file
+    options:
+      max-size: "50m"
+      max-file: "5"
+
+services:
+
+  # --- Database ---
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: mistake-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: pattern_db
+    volumes:
+      - /data/postgres:/var/lib/postgresql/data
+    networks:
+      - mistaike-net
+    <<: [*restart, *logging]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # --- API (public) ---
+  api-public:
+    image: ghcr.io/mistaike-ai/mistake-api:${API_IMAGE_TAG:-latest}
+    container_name: mistake-api-public
+    environment:
+      DATABASE_URL: postgresql://app_user:${APP_USER_PASSWORD}@postgres:5432/pattern_db
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+      INTERNAL_SERVICE_SECRET: ${INTERNAL_SERVICE_SECRET}
+      ENV: production
+    ports:
+      - "127.0.0.1:8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - mistaike-net
+    <<: [*restart, *logging]
+
+  # --- API (internal) ---
+  api-internal:
+    image: ghcr.io/mistaike-ai/mistake-api:${API_IMAGE_TAG:-latest}
+    container_name: mistake-api-internal
+    environment:
+      DATABASE_URL: postgresql://app_user:${APP_USER_PASSWORD}@postgres:5432/pattern_db
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+      INTERNAL_SERVICE_SECRET: ${INTERNAL_SERVICE_SECRET}
+      ENV: production
+      INTERNAL_MODE: "true"
+    ports:
+      - "127.0.0.1:8081:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - mistaike-net
+    <<: [*restart, *logging]
+
+  # --- MCP server ---
+  mcp:
+    image: ghcr.io/mistaike-ai/mistake-mcp:${MCP_IMAGE_TAG:-latest}
+    container_name: mistake-mcp
+    environment:
+      DATABASE_URL: postgresql://app_user:${APP_USER_PASSWORD}@postgres:5432/pattern_db
+      INTERNAL_SERVICE_SECRET: ${INTERNAL_SERVICE_SECRET}
+      ENV: production
+    ports:
+      - "127.0.0.1:8082:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - mistaike-net
+    <<: [*restart, *logging]
+
+  # --- UI ---
+  ui:
+    image: ghcr.io/mistaike-ai/mistake-ui:${UI_IMAGE_TAG:-latest}
+    container_name: mistake-ui
+    environment:
+      NEXT_PUBLIC_API_URL: https://api.mistaike.ai
+      NEXT_PUBLIC_MCP_URL: https://mcp.mistaike.ai
+    ports:
+      - "127.0.0.1:3000:3000"
+    <<: [*restart, *logging]
+
+  # --- Pipeline: Validator ---
+  validator:
+    image: ghcr.io/mistaike-ai/mistake-validator:${BACKEND_IMAGE_TAG:-latest}
+    container_name: mistake-validator
+    environment:
+      DATABASE_URL: postgresql://app_user:${APP_USER_PASSWORD}@postgres:5432/pattern_db
+      OLLAMA_ENDPOINT: ${OLLAMA_ENDPOINT}
+      OLLAMA_API_KEY: ${OLLAMA_API_KEY}
+      N_WORKERS: "16"
+      CONTINUOUS: "true"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - mistaike-net
+    <<: [*restart, *logging]
+
+  # --- Pipeline: Sanitizer ---
+  sanitizer:
+    image: ghcr.io/mistaike-ai/mistake-sanitizer:${BACKEND_IMAGE_TAG:-latest}
+    container_name: mistake-sanitizer
+    environment:
+      DATABASE_URL: postgresql://app_user:${APP_USER_PASSWORD}@postgres:5432/pattern_db
+      OLLAMA_ENDPOINT: ${OLLAMA_ENDPOINT}
+      OLLAMA_API_KEY: ${OLLAMA_API_KEY}
+      N_WORKERS: "12"
+      CONTINUOUS: "true"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - mistaike-net
+    <<: [*restart, *logging]
+
+  # --- Pipeline: Extractor (Google embeddings retained) ---
+  extractor:
+    image: ghcr.io/mistaike-ai/mistake-extractor:${BACKEND_IMAGE_TAG:-latest}
+    container_name: mistake-extractor
+    environment:
+      DATABASE_URL: postgresql://app_user:${APP_USER_PASSWORD}@postgres:5432/pattern_db
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY}
+      CONTINUOUS: "true"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - mistaike-net
+    <<: [*restart, *logging]
+
+  # --- Caddy (reverse proxy + wildcard TLS via Cloudflare DNS-01) ---
+  caddy:
+    build:
+      context: .
+      dockerfile: Dockerfile.caddy
+    container_name: mistake-caddy
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      CLOUDFLARE_API_TOKEN: ${CLOUDFLARE_API_TOKEN}
+    volumes:
+      - ./Caddyfile.prod:/etc/caddy/Caddyfile:ro
+      - /data/caddy:/data
+      - /data/caddy-config:/config
+    networks:
+      - mistaike-net
+    <<: [*restart, *logging]
+
+  # --- Cloudflare tunnel (DB access) ---
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: mistake-cloudflared
+    command: tunnel run
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN}
+    networks:
+      - mistaike-net
+    <<: [*restart, *logging]
+
+networks:
+  mistaike-net:
+    driver: bridge

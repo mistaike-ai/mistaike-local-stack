@@ -1,0 +1,38 @@
+# Caddyfile — Hetzner production
+#
+# TLS strategy:
+#   - Cloudflare proxy (orange cloud) terminates SSL for clients
+#   - Cloudflare → Hetzner uses HTTPS (Full Strict mode) with this wildcard cert
+#   - Wildcard cert obtained via Let's Encrypt DNS-01 challenge (Cloudflare DNS)
+#   - CLOUDFLARE_API_TOKEN must have Zone:DNS:Edit permission for mistaike.ai
+
+{
+    email nick@mistaike.ai
+}
+
+(tls_cloudflare) {
+    tls {
+        dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+        resolvers 1.1.1.1
+    }
+}
+
+mistaike.ai, www.mistaike.ai {
+    import tls_cloudflare
+    reverse_proxy ui:3000
+}
+
+api.mistaike.ai {
+    import tls_cloudflare
+    reverse_proxy api-public:8080
+}
+
+api-internal.mistaike.ai {
+    import tls_cloudflare
+    reverse_proxy api-internal:8080
+}
+
+mcp.mistaike.ai {
+    import tls_cloudflare
+    reverse_proxy mcp:8080
+}
