@@ -107,7 +107,7 @@ services:
 
   # --- Pipeline: Validator ---
   validator:
-    image: ghcr.io/mistaike-ai/mistake-validator:${BACKEND_IMAGE_TAG:-latest}
+    image: ghcr.io/mistaike-ai/mistake-backend:${BACKEND_IMAGE_TAG:-latest}
     container_name: mistake-validator
     environment:
       DATABASE_URL: postgresql://app_user:${APP_USER_PASSWORD}@postgres:5432/pattern_db
@@ -124,7 +124,7 @@ services:
 
   # --- Pipeline: Sanitizer ---
   sanitizer:
-    image: ghcr.io/mistaike-ai/mistake-sanitizer:${BACKEND_IMAGE_TAG:-latest}
+    image: ghcr.io/mistaike-ai/mistake-backend:${BACKEND_IMAGE_TAG:-latest}
     container_name: mistake-sanitizer
     environment:
       DATABASE_URL: postgresql://app_user:${APP_USER_PASSWORD}@postgres:5432/pattern_db
@@ -141,7 +141,7 @@ services:
 
   # --- Pipeline: Extractor (Google embeddings retained) ---
   extractor:
-    image: ghcr.io/mistaike-ai/mistake-extractor:${BACKEND_IMAGE_TAG:-latest}
+    image: ghcr.io/mistaike-ai/mistake-backend:${BACKEND_IMAGE_TAG:-latest}
     container_name: mistake-extractor
     environment:
       DATABASE_URL: postgresql://app_user:${APP_USER_PASSWORD}@postgres:5432/pattern_db
