@@ -156,9 +156,7 @@ services:
 
   # --- Caddy (reverse proxy + wildcard TLS via Cloudflare DNS-01) ---
   caddy:
-    build:
-      context: .
-      dockerfile: Dockerfile.caddy
+    image: ghcr.io/mistaike-ai/mistake-caddy:latest
     container_name: mistake-caddy
     ports:
       - "80:80"
@@ -166,7 +164,7 @@ services:
     environment:
       CLOUDFLARE_API_TOKEN: ${CLOUDFLARE_API_TOKEN}
     volumes:
-      - ./Caddyfile.prod:/etc/caddy/Caddyfile:ro
+      - /opt/mistaike/Caddyfile.prod:/etc/caddy/Caddyfile:ro
       - /data/caddy:/data
       - /data/caddy-config:/config
     networks:
@@ -178,14 +176,8 @@ services:
     image: portainer/portainer-ee:latest
     container_name: mistake-portainer
     ports:
-      - "127.0.0.1:9000:9000"
-    command: >
-      --license-key ${PORTAINER_LICENSE_KEY}
-      --oauth-provider github
-      --oauth-client-id ${GITHUB_OAUTH_CLIENT_ID}
-      --oauth-client-secret ${GITHUB_OAUTH_CLIENT_SECRET}
-      --oauth-enable-device-flow
-      --oauth-user-identifier login
+      - "9000:9000"
+    command: --license-key ${PORTAINER_LICENSE_KEY}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - /data/portainer:/data
