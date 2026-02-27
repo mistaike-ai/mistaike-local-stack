@@ -10,3 +10,6 @@
 [submodule "repos/mcp"]
 	path = repos/mcp
 	url = https://github.com/mistaike-ai/mistaike-mcp.git
+[submodule "repos/mcp-hub"]
+	path = repos/mcp-hub
+	url = git@github.com:mistaike-ai/mcp-hub.git
