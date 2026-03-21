@@ -14,3 +14,15 @@ data/
 # Environment overrides
 .env
 .env.local
+
+# Secrets
+.gh_pat
+.env.heist
+.env.*
+
+# Test scripts
+test_*.py
+
+# Large files
+*.zip
+repos/blog/

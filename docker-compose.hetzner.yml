@@ -1,0 +1,132 @@
+# Hetzner override — dedicated network (4xxx ports), prod-safe
+# Usage: docker compose -f docker-compose.yml -f docker-compose.hetzner.yml up -d
+
+x-hetzner-hosts: &hetzner-hosts
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
+
+services:
+  mistake-postgres-dev:
+    container_name: mistake-postgres-local
+    ports:
+      - "127.0.0.1:4003:5432"
+    volumes:
+      - postgres-data-dev:/var/lib/postgresql/data
+      - ./init/01_run_migrations.sh:/docker-entrypoint-initdb.d/01_run_migrations.sh
+      - ./init/00_create_roles.sql:/migrations/00_init/00_create_roles.sql
+      - ./repos/middleware/db/migrations:/migrations/01_middleware
+      - ./repos/backend/db/migrations:/migrations/02_backend
+      - ./seed:/migrations/50_seed
+    networks:
+      localstack-net: {}
+
+  mistake-redis-dev:
+    container_name: mistake-redis-local
+    networks:
+      localstack-net: {}
+
+  mistake-pgadmin-dev:
+    container_name: mistake-pgadmin-local
+    ports:
+      - "127.0.0.1:4004:80"
+    networks:
+      localstack-net: {}
+
+  mistake-api-public:
+    <<: *hetzner-hosts
+    container_name: mistake-api-public-local
+    build:
+      context: ./repos/middleware
+      dockerfile: Dockerfile.api
+    ports:
+      - "0.0.0.0:4002:8080"
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@mistake-postgres-local:5432/pattern_db?sslmode=disable
+      OLLAMA_EMBEDDING_URL: http://host.docker.internal:11434
+      OLLAMA_EMBEDDING_MODEL: nomic-embed-text-v2-moe
+      REDIS_URL: redis://mistake-redis-local:6379/0
+      TURNSTILE_SECRET_KEY: ${TURNSTILE_SECRET_KEY:-test}
+    networks:
+      localstack-net: {}
+
+  mistake-api-internal:
+    <<: *hetzner-hosts
+    container_name: mistake-api-internal-local
+    build:
+      context: ./repos/middleware
+      dockerfile: Dockerfile.api
+    ports:
+      - "0.0.0.0:4006:8080"
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@mistake-postgres-local:5432/pattern_db?sslmode=disable
+      OLLAMA_EMBEDDING_URL: http://host.docker.internal:11434
+      OLLAMA_EMBEDDING_MODEL: nomic-embed-text-v2-moe
+      REDIS_URL: redis://mistake-redis-local:6379/0
+    networks:
+      localstack-net: {}
+
+  mistake-ui-dev:
+    <<: *hetzner-hosts
+    container_name: mistake-ui-local
+    build:
+      context: ./repos/ui
+      dockerfile: Dockerfile.dev
+    ports:
+      - "0.0.0.0:4001:3000"
+    volumes:
+      - ./repos/blog/posts:/app/src/content/blog
+      - ./repos/blog/images:/app/public/img/blog
+      - ./.env.heist:/app/.env.local
+    environment:
+      API_INTERNAL_URL: http://mistake-api-internal-local:8080
+      API_PUBLIC_URL: http://mistake-api-public-local:8080
+      NEXT_PUBLIC_API_URL: http://192.168.4.2:4002
+      NEXT_PUBLIC_HEIST_ENABLED: "true"
+      NEXT_PUBLIC_HEIST_API_URL: http://192.168.4.2:4008
+    networks:
+      localstack-net: {}
+
+  mistake-mcp-dev:
+    <<: *hetzner-hosts
+    container_name: mistake-mcp-local
+    build:
+      context: ./repos/mcp
+      dockerfile: Dockerfile.mistake-mcp
+    ports:
+      - "0.0.0.0:4007:8000"
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@mistake-postgres-local:5432/pattern_db
+    networks:
+      localstack-net: {}
+
+  mistake-heist-dev:
+    <<: *hetzner-hosts
+    container_name: mistake-heist-local
+    build:
+      context: ./repos/heist
+      dockerfile: Dockerfile
+    ports:
+      - "0.0.0.0:4008:8002"
+    environment:
+      HEIST_ENABLED: "true"
+      HEIST_HOST: 0.0.0.0
+      HEIST_PORT: 8002
+      REDIS_URL: redis://mistake-redis-local:6379/1
+      AUTOCORRECT_URL: http://mistake-api-internal-local:8080
+      INTERNAL_SERVICE_SECRET: ${INTERNAL_SERVICE_SECRET:-dev-secret}
+    depends_on:
+      mistake-redis-dev:
+        condition: service_healthy
+    networks:
+      localstack-net: {}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8002/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+networks:
+  localstack-net:
+    name: localstack-net
+    driver: bridge

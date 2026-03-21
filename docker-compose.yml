@@ -171,6 +171,7 @@ services:
       API_INTERNAL_URL: http://mistake-api-internal:8080
       API_PUBLIC_URL: http://mistake-api-public:8080
       NEXT_PUBLIC_API_URL: http://localhost:3002
+      GITHUB_RELEASES_TOKEN: ${GITHUB_RELEASES_TOKEN}
     depends_on:
       mistake-api-internal:
         condition: service_healthy
