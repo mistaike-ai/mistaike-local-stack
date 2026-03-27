@@ -126,6 +126,38 @@ services:
       timeout: 10s
       retries: 3
 
+
+  mistaike-public-ui-dev:
+    container_name: mistaike-public-ui-local
+    build:
+      context: ./repos/public-ui
+      dockerfile: Dockerfile.dev
+    ports:
+      - "127.0.0.1:4005:4321"
+    volumes:
+      - ./repos/public-ui/src:/app/src
+      - ./repos/public-ui/public:/app/public
+    environment:
+      NODE_ENV: development
+      PUBLIC_APP_URL: http://192.168.4.2:4001
+    networks:
+      localstack-net: {}
+    restart: unless-stopped
+
+  mistaike-caddy-public:
+    image: caddy:2-alpine
+    container_name: mistaike-caddy-public-local
+    ports:
+      - "0.0.0.0:4000:80"
+    volumes:
+      - ./Caddyfile.public:/etc/caddy/Caddyfile:ro
+    depends_on:
+      - mistaike-public-ui-dev
+    networks:
+      localstack-net: {}
+    restart: unless-stopped
+
+
 networks:
   localstack-net:
     name: localstack-net

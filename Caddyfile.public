@@ -1,0 +1,8 @@
+:80 {
+    encode gzip
+
+    reverse_proxy mistaike-public-ui-local:4321 {
+        header_up Host {host}
+        header_up X-Real-IP {remote_host}
+    }
+}
