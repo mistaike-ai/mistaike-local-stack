@@ -213,6 +213,22 @@ services:
       timeout: 10s
       retries: 3
 
+  mistaike-public-ui-dev:
+    build:
+      context: ./repos/public-ui
+      dockerfile: Dockerfile.dev
+    container_name: mistaike-public-ui-dev
+    ports:
+      - "0.0.0.0:3005:4321"
+    volumes:
+      - ./repos/public-ui/src:/app/src
+      - ./repos/public-ui/public:/app/public
+    environment:
+      NODE_ENV: development
+    networks:
+      - mistaike-unified-net
+    restart: unless-stopped
+
 volumes:
   postgres-data-dev:
     name: local-stack-postgres-data
